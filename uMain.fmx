@@ -38380,10 +38380,10 @@ object frmMain: TfrmMain
     Params.Strings = (
       'DriverID=SQLite'
       
-        'Database=C:\Temp\currency-converter-test-app\assets\database\con' +
+        'Database=C:\repo\currency-converter-test-app\assets\database\con' +
         'v-history.db3')
-    Connected = True
     LoginPrompt = False
+    BeforeConnect = dbConvHistoryBeforeConnect
     Left = 152
     Top = 520
   end

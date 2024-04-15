@@ -63,15 +63,11 @@ type
     procedure FormCreate(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure btnConvertClick(Sender: TObject);
+    procedure dbConvHistoryBeforeConnect(Sender: TObject);
 
   private
     { Private declarations }
-    FDBConvHistory: TFDConnection;
-    FqryConvHistoryLog: TFDQuery;
-    //FCurrencyData: TArray<TCurrencyData>;
-    //FAPIResponseData: TArray<TAPIResponseData>;
     procedure ConfigureLogFile(const AFileName: string);
-    procedure InitDatabase(const ADatabaseName: string);
     procedure ClearResult(Sender: TObject);
 
   public
@@ -83,7 +79,6 @@ type
 
 const
   LOGFILENAME = 'CurrencyConverter.log';
-  DATABASENAME = 'conv-history.db3';
   ACCESS_KEY = '8250ef116751f90dd4b394bece3c72d4';
 
 
@@ -174,7 +169,6 @@ begin
       var LSuccessStatus := GetResponseSuccessStatus(RESTResponse1.Content);
       if LSuccessStatus then
       begin
-        //LogToDatabase(RESTClient1.BaseURL, succeed);
         var jsv := TJSONObject.ParseJSONValue(RESTResponse1.Content) as TJSONObject;
         try
           var jp := jsv.Get('currencies');
@@ -265,9 +259,30 @@ begin
     if dbConvHistory.Connected then
     begin
       //
-      var LqryAddConversionLogResult := TFDQuery.Create(nil);
+
+      // create table tblConvHistory if not exists
+      var LqryCreateConvHistoryTable  := TFDQuery.Create(nil);
+      LqryCreateConvHistoryTable.Connection := dbConvHistory;
       try
-        LqryAddConversionLogResult.Connection := dbConvHistory;
+        LqryCreateConvHistoryTable.SQL.Add('CREATE TABLE IF NOT EXISTS tblConvHistory (');
+        LqryCreateConvHistoryTable.SQL.Add('Id	INTEGER NOT NULL, createdAt	INTEGER NOT NULL,');
+        LqryCreateConvHistoryTable.SQL.Add('source_currency	VARCHAR(3) NOT NULL, dest_currency	VARCHAR(3) NOT NULL,');
+        LqryCreateConvHistoryTable.SQL.Add('source_amount	REAL NOT NULL, quote	REAL NOT NULL, dest_amount	REAL NOT NULL,');
+        LqryCreateConvHistoryTable.SQL.Add('PRIMARY KEY(Id AUTOINCREMENT))');
+        try
+          LqryCreateConvHistoryTable.ExecSQL;
+        except
+          on E:Exception do
+            Log('Error: %s %s', [E.ClassName, E.Message], etError);
+        end;
+      finally
+        LqryCreateConvHistoryTable.DisposeOf;
+      end;
+
+       var LqryAddConversionLogResult := TFDQuery.Create(nil);
+      LqryAddConversionLogResult.Connection := dbConvHistory;
+      try
+
         LqryAddConversionLogResult.SQL.Add('INSERT INTO tblConvHistory(createdAt,	source_currency, dest_currency, source_amount, quote, dest_amount)');
         LqryAddConversionLogResult.SQL.Add('VALUES(:createdAt,	:source_currency, :dest_currency, :source_amount, :quote, :dest_amount)');
         LqryAddConversionLogResult.ParamByName('createdAt').AsInteger := LConvertCurrencyData.Timestamp;
@@ -281,11 +296,9 @@ begin
         except
           on E:Exception do
           begin
-            LqryAddConversionLogResult.Transaction.Rollback;
             Log('Error: %s %s', [E.ClassName, E.Message], etError);
           end;
         end;
-
       finally
         LqryAddConversionLogResult.DisposeOf;
       end;
@@ -313,15 +326,10 @@ begin
   GlobalLogFileProvider.Enabled := True;
 end;
 
-procedure TfrmMain.InitDatabase(const ADatabaseName: string);
+procedure TfrmMain.dbConvHistoryBeforeConnect(Sender: TObject);
 begin
-  FDBConvHistory := TFDConnection.Create(self);
-  FDBConvHistory.DriverName := 'SQLite';
-  FDBConvHistory.LoginPrompt := False;
-  {$IF DEFINED(iOS) or DEFINED(ANDROID)}
+{$IF DEFINED(iOS) or DEFINED(ANDROID)}
   FDBConvHistory.Params.Values['Database'] := TPath.Combine(TPath.GetDocumentsPath, ADatabaseName);
-  {$ELSE}
-  FDBConvHistory.Params.Values['Database'] := ADatabaseName;
   {$ENDIF}
 end;
 
@@ -334,13 +342,13 @@ begin
   Log('FormCreate event begin', etInfo);
   {$ENDIF}
    ConfigureLogFile(LOGFILENAME);
-   InitDatabase(DATABASENAME);
+
    try
-     FDBConvHistory.Open;
-     Log('Connect to database % is successful', [FDBConvHistory.Params.Values['Database']], etInfo);
+     dbConvHistory.Open;
+     Log('Connect to database % is successful', [dbConvHistory.Params.Values['Database']], etInfo);
    except
      on E:Exception do
-       Log('Cannot connect to database %s. %s', [FDBConvHistory.Params.Values['Database'], E.Message], etError);
+       Log('Cannot connect to database %s. %s', [dbConvHistory.Params.Values['Database'], E.Message], etError);
    end;
 
   var LOutputErrorMessage := EmptyStr;
@@ -370,13 +378,6 @@ begin
   cbTo.OnChange := ClearResult;
   edtAmount.OnChange := ClearResult;
 
-  try
-    dbConvHistory.Open;
-  except
-    on E:Exception do
-      Log('Error connect to database: %d. %s', [E.ClassName, E.Message], etError);
-  end;
-
   {$IFDEF DEBUG}
   Log('FormCreate event end', etInfo);
   {$ENDIF}
@@ -387,11 +388,6 @@ begin
   {$IFDEF DEBUG}
   Log('FormDestroy event begin', etInfo);
   {$ENDIF}
-  if Assigned(FqryConvHistoryLog) then
-    FreeAndNil(FqryConvHistoryLog);
-
-  if Assigned(FDBConvHistory) then
-    FreeAndNil(FDBConvHistory);
 
   if dbConvHistory.Connected then
     dbConvHistory.Close;
